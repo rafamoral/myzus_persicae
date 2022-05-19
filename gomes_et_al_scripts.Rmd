@@ -1,0 +1,418 @@
+---
+title: "Variation in isolines of Myzus persicae to successful parasitization by Diaeretiella rapae and assessment of biological traits of selected lines"
+author: "Gomes et al."
+date: "Scripts for full reproducibility of results"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(hnp)
+library(survival)
+library(coefplot2)
+library(tidyverse)
+library(gamlss)
+library(laercio)
+library(corrplot)
+library(ggbiplot)
+library(pheatmap)
+library(GGally)
+
+se <- function(x) sd(x)/sqrt(length(x))
+```
+
+## General Remarks
+
+All analyses were carried out using R (R Core Team, 2020). Package `survival` (Therneau, 2020) was used to fit the Cox proportional hazards models, `ggplot2` (Wickham, 2016) was used to create the plots, and `hnp` (Moral et al., 2017) was used to assess model goodness-of-fit.
+
+The simbiont effects were analysed by fitting separate models, since the effects of lineage are nested within simbiont. Consequently, by adding simbiont and lineage to the linear predictor concomitantly, the analysis would be equivalent to a test of lack-of-fit, instead of a true assessment of the effect of lineage.
+
+## Parasitism Rate
+
+### Methods
+
+We fitted Bernoulli generalized linear models to the parasitism rate data (binary), including the effects of lineage in the linear predictor. We assessed the significance of the lineage effect through the analysis of deviance.
+
+### Results
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+para <- read_csv("parasitismo.csv")
+para$linhagem <- as.factor(para$linhagem)
+para$Simbiont <- as.factor(para$simbionte)
+levels(para$Simbiont) <- c("None","Rickettsia","Both","Spirogyra")
+
+fit <- glm(parasitismo ~ linhagem, family = binomial, data = para)
+anova(fit, test = "Chisq")
+
+fit <- glm(parasitismo ~ Simbiont, family = binomial, data = para)
+anova(fit, test = "Chisq")
+
+para %>%
+  group_by(linhagem) %>%
+  dplyr::summarise(mean = (mean(parasitismo)*100) %>% round(2),
+            std_error = (se(parasitismo)*100) %>% round(4))
+
+para %>%
+  group_by(linhagem) %>%
+  dplyr::summarise(mean = (mean(parasitismo)*100) %>% round(2),
+            std_error = (se(parasitismo)*100) %>% round(4),
+            Simbiont = unique(Simbiont)) %>%
+  mutate(letter = "a") %>%
+  ggplot(aes(x = reorder(linhagem, -mean), y = mean, fill = Simbiont)) +
+  theme_bw() +
+  geom_bar(stat = "identity") +
+  geom_errorbar(aes(ymin = mean - std_error, ymax = mean + std_error),
+                width = 0.2) +
+  ylim(0, 100) +
+  ylab("Mean parasitism rate (%)") +
+  xlab("Lineage") +
+  geom_text(aes(label = letter, y = mean + std_error + 5))
+```
+
+## Development
+
+### Methods
+
+We fitted Cox proportional hazards models to the development time data including the effects of lineage in the linear predictor. We assessed the significance of the lineage effect using likelihood-ratio tests for nested models. We performed multiple comparisons by obtaining the 95% confidence intervals for the true linear predictors.
+
+### Results
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+des <- read_csv("desenvolvimento.csv")
+des$linhagem <- as.factor(des$linhagem)
+des$Simbiont <- as.factor(des$simbionte)
+levels(des$Simbiont) <- c("None","Rickettsia")
+
+fit <- coxph(Surv(tempo, censura) ~ linhagem, data = des)
+anova(fit)
+
+fit <- coxph(Surv(tempo, censura) ~ Simbiont, data = des)
+anova(fit)
+
+km <- survfit(Surv(tempo, censura) ~ linhagem, data = des)
+summ <- capture.output(print(km, rmean = "common"))
+
+rmean <- as.numeric(substr(summ[-c(1:3,10)], 27, 31))
+se_rmean <- as.numeric(substr(summ[-c(1:3,10)], 38, 42))
+lin <- gsub(" ", "", substr(summ[-c(1:3,10)], 10, 13))
+
+km_summary <- tibble(lineage = lin,
+                     mean = rmean,
+                     std_error = se_rmean,
+                     Simbiont = des %>% group_by(linhagem) %>% dplyr::summarise(Simbiont=unique(Simbiont)) %>% pull(Simbiont))
+
+km_summary %>%
+  mutate(letter = c("ab","a","ab","ab","ab","b")) %>%
+  ggplot(aes(x = reorder(lineage, -mean), y = mean, fill = Simbiont)) +
+  theme_bw() +
+  geom_bar(stat = "identity") +
+  geom_errorbar(aes(ymin = mean - std_error, ymax = mean + std_error),
+                width = 0.2) +
+  ylab("Mean survival time (days)") +
+  xlab("Lineage") +
+  geom_text(aes(label = letter, y = mean + std_error + 1))
+```
+
+## Fecundity
+
+### Methods
+
+We fitted a negative binomial model to the fecundity data, including the effects of lineage in the linear predictor. We assessed the significance of the lineage effect through F-tests (since the dispersion parameter was estimated). We performed multiple comparisons by obtaining the 95% confidence intervals for the true linear predictors.
+
+### Results
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+fec <- read_csv("fecundidade.csv")
+fec$linhagem <- as.factor(fec$linhagem)
+fec$Simbiont <- as.factor(fec$simbionte)
+levels(fec$Simbiont) <- c("None","Rickettsia")
+
+fit <- glm.nb(ninfas ~ linhagem, data = fec)
+anova(fit, test = "F")
+
+fit <- glm.nb(ninfas ~ Simbiont, data = fec)
+anova(fit, test = "F")
+
+fec %>%
+  group_by(linhagem) %>%
+  dplyr::summarise(mean = mean(ninfas) %>% round(2),
+            std_error = se(ninfas) %>% round(4))
+
+fec %>%
+  group_by(linhagem) %>%
+  dplyr::summarise(mean = mean(ninfas) %>% round(2),
+            std_error = se(ninfas) %>% round(4),
+            Simbiont = unique(Simbiont)) %>%
+  mutate(letter = c("ab","a","ab","ab","ab","b")) %>%
+  ggplot(aes(x = reorder(linhagem, -mean), y = mean, fill = Simbiont)) +
+  theme_bw() +
+  geom_bar(stat = "identity") +
+  geom_errorbar(aes(ymin = mean - std_error, ymax = mean + std_error),
+                width = 0.2) +
+  ylab("Mean fecundity") +
+  xlab("Lineage") +
+  geom_text(aes(label = letter, y = mean + std_error + 2))
+```
+
+## Longevity
+
+### Methods
+
+We fitted an inverse Gaussian generalized linear model to the longevity data (since there was no censoring), including the effects of lineage in the linear predictor. We assessed the significance of the lineage effect through F-tests.
+
+### Results
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+lon <- read_csv("longevidade.csv")
+lon$linhagem <- as.factor(lon$linhagem)
+lon$Simbiont <- as.factor(lon$simbionte)
+levels(lon$Simbiont) <- c("None","Rickettsia")
+
+fit <- glm(tempo ~ linhagem, family = inverse.gaussian, data = lon)
+anova(fit, test = "F")
+
+fit <- glm(tempo ~ Simbiont, family = inverse.gaussian, data = lon)
+anova(fit, test = "F")
+
+lon %>%
+  group_by(linhagem) %>%
+  dplyr::summarise(mean = mean(tempo) %>% round(2),
+            std_error = se(tempo) %>% round(4))
+
+lon %>%
+  group_by(linhagem) %>%
+  dplyr::summarise(mean = mean(tempo) %>% round(2),
+            std_error = se(tempo) %>% round(4),
+            Simbiont = unique(Simbiont)) %>%
+  mutate(letter = "a") %>%
+  ggplot(aes(x = reorder(linhagem, -mean), y = mean, fill = Simbiont)) +
+  theme_bw() +
+  geom_bar(stat = "identity") +
+  geom_errorbar(aes(ymin = mean - std_error, ymax = mean + std_error),
+                width = 0.2) +
+  ylab("Mean longevity (days)") +
+  xlab("Lineage") +
+  geom_text(aes(label = letter, y = mean + std_error + 1))
+```
+
+## Tibia Size
+
+### Methods
+
+We fitted a gamma generalized linear model to the tibia size data, including the effects of lineage in the linear predictor. We assessed the significance of the lineage effect through F-tests. We performed multiple comparisons by obtaining the 95% confidence intervals for the true linear predictors.
+
+### Results
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+size <- read_csv("tamanho.csv")
+size$linhagem <- as.factor(size$linhagem)
+size$Simbiont <- as.factor(size$simbionte)
+levels(size$Simbiont) <- c("None","Rickettsia")
+
+fit <- glm(tamanho_tibia ~ linhagem, family = Gamma, data = size)
+anova(fit, test = "F")
+
+fit <- glm(tamanho_tibia ~ Simbiont, family = Gamma, data = size)
+anova(fit, test = "F")
+
+size %>%
+  group_by(linhagem) %>%
+  dplyr::summarise(mean = mean(tamanho_tibia) %>% round(2),
+            std_error = se(tamanho_tibia) %>% round(4))
+
+size %>%
+  group_by(linhagem) %>%
+  dplyr::summarise(mean = mean(tamanho_tibia) %>% round(2),
+            std_error = se(tamanho_tibia) %>% round(4),
+            Simbiont = unique(Simbiont)) %>%
+  mutate(letter = c("b","ab","a","b","ab","ab")) %>%
+  ggplot(aes(x = reorder(linhagem, -mean), y = mean, fill = Simbiont)) +
+  theme_bw() +
+  geom_bar(stat = "identity") +
+  geom_errorbar(aes(ymin = mean - std_error, ymax = mean + std_error),
+                width = 0.2) +
+  ylab("Tibia size") +
+  xlab("Lineage") +
+  geom_text(aes(label = letter, y = mean + std_error + 50))
+```
+
+## Life Table Variables
+
+### Methods
+
+For the univariate analyses, we fitted linear models to the life table variables including the effects of lineage in the linear predictor. We assessed the significance of the lineage effect using F tests and performed multiple comparisons using Tukey's test.
+
+For the multivariate analysis, we fitted a multivariate linear model including the effects of lineage in the linear predictor. We assessed the significance of the lineage effect using Pillai's trace test. We visualise the multivariate relationships between lineages using a biplot of the first two principal components, and look at the correlations between variables using a correlation plot. Finally, we use a heatmap to cluster lineages and variables of the life table using the Euclidean distance and Ward's method.
+
+### Results
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+tab <- read_csv("tabela_de_vida.csv")
+tab$linhagem <- as.factor(tab$linhagem)
+```
+
+_Net Reproduction Rate (ROPSV)_
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+fit <- aov(ROPSV ~ linhagem, data = tab)
+anova(fit)
+
+LTukey(fit)
+
+tab %>%
+  group_by(linhagem) %>%
+  dplyr::summarise(mean = mean(ROPSV) %>% round(2),
+            std_error = se(ROPSV) %>% round(4)) %>%
+  mutate(letter = c("bc","a","ab","ab","abc","c")) %>%
+  ggplot(aes(x = reorder(linhagem, -mean), y = mean)) +
+  theme_bw() +
+  geom_bar(stat = "identity") +
+  geom_errorbar(aes(ymin = mean - std_error, ymax = mean + std_error),
+                width = 0.2) +
+  ylab("Net reproduction rate") +
+  xlab("Lineage") +
+  geom_text(aes(label = letter, y = mean + std_error + 2))
+```
+
+_Intrinsic Growth Rate (RMPSV)_
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+fit <- aov(RMPSV ~ linhagem, data = tab)
+anova(fit)
+
+LTukey(fit)
+
+tab %>%
+  group_by(linhagem) %>%
+  dplyr::summarise(mean = mean(RMPSV) %>% round(2),
+            std_error = se(RMPSV) %>% round(4)) %>%
+  mutate(letter = c("bc","ab","ab","ab","a","c")) %>%
+  ggplot(aes(x = reorder(linhagem, -mean), y = mean)) +
+  theme_bw() +
+  geom_bar(stat = "identity") +
+  geom_errorbar(aes(ymin = mean - std_error, ymax = mean + std_error),
+                width = 0.2) +
+  ylab("Intrinsic growth rate") +
+  xlab("Lineage") +
+  geom_text(aes(label = letter, y = mean + std_error + .02))
+```
+
+_Mean Interval Between Generations (IMGPSV)_
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+fit <- aov(IMGPSV ~ linhagem, data = tab)
+anova(fit)
+
+LTukey(fit)
+
+tab %>%
+  group_by(linhagem) %>%
+  dplyr::summarise(mean = mean(IMGPSV) %>% round(2),
+            std_error = se(IMGPSV) %>% round(4)) %>%
+  mutate(letter = c("a","a","ab","a","b","ab")) %>%
+  ggplot(aes(x = reorder(linhagem, -mean), y = mean)) +
+  theme_bw() +
+  geom_bar(stat = "identity") +
+  geom_errorbar(aes(ymin = mean - std_error, ymax = mean + std_error),
+                width = 0.2) +
+  ylab("Mean interval between generations") +
+  xlab("Lineage") +
+  geom_text(aes(label = letter, y = mean + std_error + 1))
+```
+
+_Duplication Time (TDPSV)_
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+fit <- aov(TDPSV ~ linhagem, data = tab)
+anova(fit)
+
+LTukey(fit)
+
+tab %>%
+  group_by(linhagem) %>%
+  dplyr::summarise(mean = mean(TDPSV) %>% round(2),
+            std_error = se(TDPSV) %>% round(4)) %>%
+  mutate(letter = c("ab","bc","bc","bc","c","a")) %>%
+  ggplot(aes(x = reorder(linhagem, -mean), y = mean)) +
+  theme_bw() +
+  geom_bar(stat = "identity") +
+  geom_errorbar(aes(ymin = mean - std_error, ymax = mean + std_error),
+                width = 0.2) +
+  ylab("Duplication time") +
+  xlab("Lineage") +
+  geom_text(aes(label = letter, y = mean + std_error + .2))
+```
+
+_Finite Growth Ratio (LPSV)_
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+fit <- aov(LPSV ~ linhagem, data = tab)
+anova(fit)
+
+LTukey(fit)
+
+tab %>%
+  group_by(linhagem) %>%
+  dplyr::summarise(mean = mean(LPSV) %>% round(2),
+            std_error = se(LPSV) %>% round(4)) %>%
+  mutate(letter = c("bc","ab","ab","ab","a","c")) %>%
+  ggplot(aes(x = reorder(linhagem, -mean), y = mean)) +
+  theme_bw() +
+  geom_bar(stat = "identity") +
+  geom_errorbar(aes(ymin = mean - std_error, ymax = mean + std_error),
+                width = 0.2) +
+  ylab("Finite growth ratio") +
+  xlab("Lineage") +
+  geom_text(aes(label = letter, y = mean + std_error + .07))
+```
+
+_Multivariate Analysis_
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+fit <- manova(cbind(ROPSV,RMPSV,IMGPSV,TDPSV,LPSV) ~ linhagem, data = tab)
+anova(fit)
+```
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+ggpairs(tab, aes(col = linhagem), cex = .5) +
+  theme_bw()
+```
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+corr_mat <- cor(tab[,-1])
+
+corrplot.mixed(corr_mat, lower = "square", upper = "number", number.digits = 3)
+```
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+tab2 <- tab
+tab2[,-1] <- scale(tab2[,-1])
+
+pca <- prcomp(tab2[,-1], scale. = TRUE)
+
+ggbiplot(pca, obs.scale = 1, var.scale = 1, alpha = .5,
+         groups = tab$linhagem, ellipse = TRUE, circle = FALSE) +
+  scale_color_discrete(name = "Lineage") +
+  theme_bw() +
+  theme(legend.text.align = 0)
+```
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+mean_tab <- tab2 %>%
+  group_by(linhagem) %>%
+  dplyr::summarise(ROPSV = mean(ROPSV),
+                   RMPSV = mean(RMPSV),
+                   IMGPSV = mean(IMGPSV),
+                   TDPSV = mean(TDPSV),
+                   LPSV = mean(LPSV))
+m_names <- mean_tab$linhagem
+mean_tab <- mean_tab %>%
+  dplyr::select(- linhagem) %>%
+  as.matrix
+rownames(mean_tab) <- m_names
+
+print(pheatmap(mean_tab, clustering_method = "ward.D2"))
+```
